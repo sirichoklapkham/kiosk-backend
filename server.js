@@ -20,6 +20,9 @@ const CHILLPAY_API_KEY = 'DPFLpagGhiCaSImw6tOIm3wrGKQFGU0ylbEOS8PaUvFEqt3dIdEuS8
 const CHILLPAY_MD5_KEY = 'a5xCR28MUXLoTnKZvaTwmUaQsz9nTTDnUVIwth7St0Y9cg1Gj90ydBX62UJSr8PRVIDSQgTVaXqj8TtnDhB0bO2zCXwJFk4XmZ5CQBl1PAOG1A5Cf8i44mCdtUsAruVRfobd00hHMewKfbbTyD72tnydab78c9jNh4WGm';
 const CHILLPAY_API_URL = 'https://api.chillpay.co/api/v2/Payment';
 
+// Webhook URL ของ Render.com สำหรับรับแจ้งเตือนเมื่อเงินเข้า
+const WEBHOOK_URL = 'https://my-kiosk-backend.onrender.com/api/webhook/chillpay';
+
 let kioskSocket = null;
 
 // 1. รับการเชื่อมต่อ WebSocket จากตู้ C# WPF
@@ -51,6 +54,7 @@ app.post('/api/create-qr', async (req, res) => {
     Amount: amount,
     ChannelCode: channelCode,
     Currency: 'THB',
+    ResultUrl: WEBHOOK_URL, // ส่ง Webhook URL ให้ ChillPay รู้จักอัตโนมัติ
     CheckSum: checkSum
   };
 
@@ -83,7 +87,7 @@ app.post('/api/webhook/chillpay', (req, res) => {
     if (PaymentStatus === '0' || PaymentStatus === 0) {
       console.log(`[Payment Success] Order: ${OrderNo}`);
 
-      // ส่งสัญญาณ Socket ไปสั่งปลดล็อก C# WPF
+      // ส่งสัญญาณ Socket ไปสั่งปลดล็อก C# WPF หน้าตู้
       if (kioskSocket) {
         kioskSocket.emit('PAYMENT_SUCCESS', {
           orderNo: OrderNo,
