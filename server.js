@@ -100,3 +100,86 @@ const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
 });
+// เพิ่มต่อใน server.js หน้าสำหรับแคชเชียร์ดึงรหัสและสั่งพิมพ์สลิป 80mm
+app.get('/admin', (req, res) => {
+    res.send(`
+    <!DOCTYPE html>
+    <html lang="th">
+    <head>
+        <meta charset="UTF-8">
+        <title>ระบบพิมพ์คูปอง Photo Booth (80mm)</title>
+        <style>
+            body { font-family: 'Courier New', monospace; padding: 20px; background: #f4f4f9; }
+            .no-print { margin-bottom: 20px; }
+            button { padding: 10px 20px; font-size: 16px; cursor: pointer; background: #4CAF50; color: white; border: none; border-radius: 5px; }
+            
+            /* เลย์เอาต์สำหรับเครื่องพิมพ์ความร้อน 80mm */
+            .ticket {
+                width: 72mm; /* ความกว้างกระดาษ 80mm (ระยะพิมพ์จริง ~72mm) */
+                padding: 10px;
+                margin: 10px 0;
+                background: #fff;
+                border: 1px dashed #ccc;
+                text-align: center;
+                box-sizing: border-box;
+                page-break-after: always;
+            }
+            .title { font-size: 18px; font-weight: bold; margin-bottom: 5px; }
+            .subtitle { font-size: 12px; margin-bottom: 15px; }
+            .code-box { 
+                font-size: 28px; 
+                font-weight: bold; 
+                letter-spacing: 4px; 
+                border: 2px solid #000; 
+                padding: 10px; 
+                margin: 10px 0; 
+                display: inline-block;
+            }
+            .footer { font-size: 11px; margin-top: 10px; }
+
+            @media print {
+                .no-print { display: none; }
+                body { padding: 0; background: #fff; }
+                .ticket { border: none; margin: 0; width: 100%; }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="no-print">
+            <h2>คลังคูปอง Photo Booth (80mm Thermal Print)</h2>
+            <button onclick="window.print()">🖨️ สั่งพิมพ์สลิปคูปองทั้งหมด</button>
+            <button onclick="location.reload()" style="background:#2196F3;">🔄 รีเฟรชรายการ</button>
+        </div>
+
+        <div id="tickets-container">กำลังโหลดรหัส...</div>
+
+        <script>
+            fetch('/api/admin/codes')
+                .then(res => res.json())
+                .then(data => {
+                    const container = document.getElementById('tickets-container');
+                    container.innerHTML = '';
+                    
+                    data.forEach((item, index) => {
+                        const ticketHtml = \`
+                            <div class="ticket">
+                                <div class="title">PHOTO BOOTH</div>
+                                <div class="subtitle">คูปองเข้าใช้งานถ่ายภาพ</div>
+                                <div>----------------------------------</div>
+                                <div>รหัสผ่านสำหรับเข้าตู้ (Passcode)</div>
+                                <div class="code-box">\${item.code}</div>
+                                <div>----------------------------------</div>
+                                <div class="footer">
+                                    ใบที่: \${index + 1} / 100<br>
+                                    *ใช้ได้ 1 ครั้งต่อ 1 สิทธิ์การถ่ายภาพ*
+                                </div>
+                            </div>
+                        \`;
+                        container.innerHTML += ticketHtml;
+                    });
+                });
+        </script>
+    </body>
+    </html>
+    `);
+});
