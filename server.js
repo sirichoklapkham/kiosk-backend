@@ -1,111 +1,90 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const bodyParser = require('body-parser');
-const axios = require('axios');
-const crypto = require('crypto');
-const cors = require('cors');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
 
-app.use(cors());
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+// กำหนด CORS ให้ C# WPF และไคลเอนต์อื่นๆ เชื่อมต่อ Socket.IO ได้
+const io = new Server(server, {
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+    }
+});
 
-const CHILLPAY_MERCHANT_CODE = 'M039098';
-const CHILLPAY_API_KEY = 'DPFLpagGhiCaSImw6tOIm3wrGKQFGU0ylbEOS8PaUvFEqt3dIdEuS8uNIw3u6Vnq';
-const CHILLPAY_MD5_KEY = 'a5xCR28MUXLoTnKZvaTwmUaQsz9nTTDnUVIwth7St0Y9cg1Gj90ydBX62UJSr8PRVIDSQgTVaXqj8TtnDhB0bO2zCXwJFk4XmZ5CQBl1PAOG1A5Cf8i44mCdtUsAruVRfobd00hHMewKfbbTyD72tnydab78c9jNh4WGm';
+// Middleware สำหรับแกะข้อมูล JSON และ URL-encoded จาก Webhook
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// หากใช้ Merchant Code/Key จาก Sandbox ให้ใช้ URL นี้
-const CHILLPAY_API_URL = 'https://api.chillpay.co/api/v2/Payment';
-
-const WEBHOOK_URL = 'https://my-kiosk-backend.onrender.com/api/webhook/chillpay';
-
+// เก็บ Socket Instance ของตู้ Kiosk
 let kioskSocket = null;
 
+// 1. ระบบจัดการ WebSocket Connection
 io.on('connection', (socket) => {
-  console.log('Kiosk connected:', socket.id);
-  kioskSocket = socket;
-  socket.on('disconnect', () => { 
-    console.log('Kiosk disconnected');
-    kioskSocket = null; 
-  });
-});
+    console.log(`[Socket.IO] Client connected: ${socket.id}`);
+    kioskSocket = socket;
 
-app.post('/api/create-qr', async (req, res) => {
-  const { amount } = req.body;
-  const orderNo = `ORD${Date.now()}`;
-  const customerId = 'GUEST';
-  const channelCode = 'epay_qr';
-
-  const checksumRaw = `${CHILLPAY_MERCHANT_CODE}${orderNo}${customerId}${amount}${channelCode}${CHILLPAY_MD5_KEY}`;
-  const checkSum = crypto.createHash('md5').update(checksumRaw).digest('hex');
-
-  const payload = {
-    MerchantCode: CHILLPAY_MERCHANT_CODE,
-    ApiKey: CHILLPAY_API_KEY,
-    OrderNo: orderNo,
-    CustomerId: customerId,
-    Amount: amount,
-    ChannelCode: channelCode,
-    Currency: 'THB',
-    ResultUrl: WEBHOOK_URL,
-    CheckSum: checkSum
-  };
-
-  try {
-    const response = await axios.post(CHILLPAY_API_URL, payload);
-    const data = response.data;
-
-    console.log('ChillPay Response:', data); // พิมพ์ Log ดูค่าที่ ChillPay ส่งกลับมา
-
-    if (data.Status === 0) {
-      res.json({
-        success: true,
-        orderNo: orderNo,
-        qrImage: data.QrCodeUrl
-      });
-    } else {
-      // ส่งข้อความ Error จริงจาก ChillPay กลับไปให้ WPF
-      res.status(400).json({ 
-        success: false, 
-        message: data.Message || `Error Status: ${data.Status}` 
-      });
-    }
-  } catch (error) {
-    console.error('API Error:', error.response ? error.response.data : error.message);
-    res.status(500).json({ 
-      success: false, 
-      message: error.response?.data?.Message || error.message 
+    socket.on('disconnect', () => {
+        console.log(`[Socket.IO] Client disconnected: ${socket.id}`);
+        if (kioskSocket && kioskSocket.id === socket.id) {
+            kioskSocket = null;
+        }
     });
-  }
 });
 
+// 2. Health Check Endpoint (สำหรับเช็กสถานะเซิร์ฟเวอร์บน Render.com)
+app.get('/', (req, res) => {
+    res.send('Kiosk Backend Server is running online!');
+});
+
+// 3. Webhook Endpoint รับแจ้งเตือนการชำระเงินจาก ChillPay
 app.post('/api/webhook/chillpay', (req, res) => {
-  const { MerchantCode, OrderNo, Amount, PaymentStatus, CheckSum } = req.body;
+    try {
+        console.log('=== Received ChillPay Webhook ===');
+        console.log(JSON.stringify(req.body, null, 2));
 
-  const checksumRaw = `${MerchantCode}${OrderNo}${Amount}${PaymentStatus}${CHILLPAY_MD5_KEY}`;
-  const calculatedChecksum = crypto.createHash('md5').update(checksumRaw).digest('hex');
+        // ChillPay จะส่ง PaymentStatus หรือ Code หรือ Status กลับมา
+        // Status: 0 หรือ PaymentStatus: 0 / 1 หมายถึง ชำระเงินสำเร็จ
+        const paymentStatus = req.body.PaymentStatus !== undefined ? req.body.PaymentStatus : req.body.Code;
+        const status = req.body.Status;
 
-  if (calculatedChecksum.toLowerCase() === CheckSum.toLowerCase()) {
-    if (PaymentStatus === '0' || PaymentStatus === 0) {
-      console.log(`[Payment Success] Order: ${OrderNo}`);
-      if (kioskSocket) {
-        kioskSocket.emit('PAYMENT_SUCCESS', {
-          orderNo: OrderNo,
-          amount: Amount / 100
-        });
-      }
+        if (paymentStatus == 0 || paymentStatus == 1 || status == 0) {
+            console.log('✅ Payment Confirmed! Emitting PAYMENT_SUCCESS to Kiosk...');
+
+            // ส่งสัญญาณ PAYMENT_SUCCESS ผ่าน Socket.IO ไปยังตู้ WPF
+            io.emit('PAYMENT_SUCCESS', {
+                status: 'success',
+                orderNo: req.body.OrderNo || req.body.orderNo || 'N/A',
+                amount: req.body.Amount || req.body.amount || 0,
+                transactionTime: new Date().toISOString()
+            });
+
+            // ตอบกลับ 200 OK ให้ ChillPay รับทราบ
+            return res.status(200).send('OK');
+        } else {
+            console.log('❌ Payment Status not successful:', paymentStatus);
+            return res.status(400).send('Payment Incomplete');
+        }
+    } catch (err) {
+        console.error('💥 Webhook Processing Error:', err.message);
+        return res.status(500).send('Server Internal Error');
     }
-    return res.status(200).send('OK');
-  } else {
-    return res.status(400).send('Invalid Checksum');
-  }
 });
 
-const PORT = process.env.PORT || 3000;
+// 4. Test Endpoint สำหรับกดทดสอบยิงปลดล็อกตู้ผ่าน Browser
+app.get('/api/test-unlock', (req, res) => {
+    console.log('🧪 Manual Test Unlock triggered via Browser');
+    io.emit('PAYMENT_SUCCESS', {
+        status: 'success',
+        orderNo: 'MANUAL_TEST',
+        amount: 1.00
+    });
+    res.send('Sent PAYMENT_SUCCESS signal to Kiosk!');
+});
+
+// เริ่มต้นรัน HTTP Server บน Port ที่ Render กำหนด (default: 10000)
+const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
-  console.log(`Backend Server running on port ${PORT}`);
+    console.log(`🚀 Server running on port ${PORT}`);
 });
