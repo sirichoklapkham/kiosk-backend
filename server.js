@@ -14,18 +14,17 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// ข้อมูล API Key จากระบบ ChillPay ของคุณ
 const CHILLPAY_MERCHANT_CODE = 'M039098';
 const CHILLPAY_API_KEY = 'DPFLpagGhiCaSImw6tOIm3wrGKQFGU0ylbEOS8PaUvFEqt3dIdEuS8uNIw3u6Vnq';
 const CHILLPAY_MD5_KEY = 'a5xCR28MUXLoTnKZvaTwmUaQsz9nTTDnUVIwth7St0Y9cg1Gj90ydBX62UJSr8PRVIDSQgTVaXqj8TtnDhB0bO2zCXwJFk4XmZ5CQBl1PAOG1A5Cf8i44mCdtUsAruVRfobd00hHMewKfbbTyD72tnydab78c9jNh4WGm';
-const CHILLPAY_API_URL = 'https://api.chillpay.co/api/v2/Payment';
 
-// Webhook URL ของ Render.com สำหรับรับแจ้งเตือนเมื่อเงินเข้า
+// หากใช้ Merchant Code/Key จาก Sandbox ให้ใช้ URL นี้
+const CHILLPAY_API_URL = 'https://sandbox-api.chillpay.co/api/v2/Payment';
+
 const WEBHOOK_URL = 'https://my-kiosk-backend.onrender.com/api/webhook/chillpay';
 
 let kioskSocket = null;
 
-// 1. รับการเชื่อมต่อ WebSocket จากตู้ C# WPF
 io.on('connection', (socket) => {
   console.log('Kiosk connected:', socket.id);
   kioskSocket = socket;
@@ -35,14 +34,12 @@ io.on('connection', (socket) => {
   });
 });
 
-// 2. Endpoint สำหรับให้ C# WPF ขอสร้าง PromptPay QR Code
 app.post('/api/create-qr', async (req, res) => {
-  const { amount } = req.body; // ยอดเงินหน่วยเป็นสตางค์ เช่น 10000 = 100 บาท
+  const { amount } = req.body;
   const orderNo = `ORD${Date.now()}`;
   const customerId = 'GUEST';
   const channelCode = 'epay_qr';
 
-  // สร้าง CheckSum ตามสูตร ChillPay
   const checksumRaw = `${CHILLPAY_MERCHANT_CODE}${orderNo}${customerId}${amount}${channelCode}${CHILLPAY_MD5_KEY}`;
   const checkSum = crypto.createHash('md5').update(checksumRaw).digest('hex');
 
@@ -54,13 +51,15 @@ app.post('/api/create-qr', async (req, res) => {
     Amount: amount,
     ChannelCode: channelCode,
     Currency: 'THB',
-    ResultUrl: WEBHOOK_URL, // ส่ง Webhook URL ให้ ChillPay รู้จักอัตโนมัติ
+    ResultUrl: WEBHOOK_URL,
     CheckSum: checkSum
   };
 
   try {
     const response = await axios.post(CHILLPAY_API_URL, payload);
     const data = response.data;
+
+    console.log('ChillPay Response:', data); // พิมพ์ Log ดูค่าที่ ChillPay ส่งกลับมา
 
     if (data.Status === 0) {
       res.json({
@@ -69,14 +68,21 @@ app.post('/api/create-qr', async (req, res) => {
         qrImage: data.QrCodeUrl
       });
     } else {
-      res.status(400).json({ success: false, message: data.Message || 'สร้าง QR ไม่สำเร็จ' });
+      // ส่งข้อความ Error จริงจาก ChillPay กลับไปให้ WPF
+      res.status(400).json({ 
+        success: false, 
+        message: data.Message || `Error Status: ${data.Status}` 
+      });
     }
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    console.error('API Error:', error.response ? error.response.data : error.message);
+    res.status(500).json({ 
+      success: false, 
+      message: error.response?.data?.Message || error.message 
+    });
   }
 });
 
-// 3. Endpoint สำหรับให้ ChillPay ส่ง Webhook มาแจ้งเตือนเมื่อจ่ายสำเร็จ
 app.post('/api/webhook/chillpay', (req, res) => {
   const { MerchantCode, OrderNo, Amount, PaymentStatus, CheckSum } = req.body;
 
@@ -86,8 +92,6 @@ app.post('/api/webhook/chillpay', (req, res) => {
   if (calculatedChecksum.toLowerCase() === CheckSum.toLowerCase()) {
     if (PaymentStatus === '0' || PaymentStatus === 0) {
       console.log(`[Payment Success] Order: ${OrderNo}`);
-
-      // ส่งสัญญาณ Socket ไปสั่งปลดล็อก C# WPF หน้าตู้
       if (kioskSocket) {
         kioskSocket.emit('PAYMENT_SUCCESS', {
           orderNo: OrderNo,
