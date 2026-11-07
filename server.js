@@ -19,7 +19,7 @@ const CHILLPAY_API_KEY = 'DPFLpagGhiCaSImw6tOIm3wrGKQFGU0ylbEOS8PaUvFEqt3dIdEuS8
 const CHILLPAY_MD5_KEY = 'a5xCR28MUXLoTnKZvaTwmUaQsz9nTTDnUVIwth7St0Y9cg1Gj90ydBX62UJSr8PRVIDSQgTVaXqj8TtnDhB0bO2zCXwJFk4XmZ5CQBl1PAOG1A5Cf8i44mCdtUsAruVRfobd00hHMewKfbbTyD72tnydab78c9jNh4WGm';
 
 // หากใช้ Merchant Code/Key จาก Sandbox ให้ใช้ URL นี้
-const CHILLPAY_API_URL = 'https://sandbox-api.chillpay.co/api/v2/Payment';
+const CHILLPAY_API_URL = 'https://api.chillpay.co/api/v2/Payment';
 
 const WEBHOOK_URL = 'https://my-kiosk-backend.onrender.com/api/webhook/chillpay';
 
