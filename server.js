@@ -5,85 +5,97 @@ const { Server } = require('socket.io');
 const app = express();
 const server = http.createServer(app);
 
-// กำหนด CORS ให้ C# WPF และไคลเอนต์อื่นๆ เชื่อมต่อ Socket.IO ได้
 const io = new Server(server, {
-    cors: {
-        origin: "*",
-        methods: ["GET", "POST"]
-    }
+    cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
-// Middleware สำหรับแกะข้อมูล JSON และ URL-encoded จาก Webhook
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// เก็บ Socket Instance ของตู้ Kiosk
-let kioskSocket = null;
+// ----------------------------------------------------
+// ระบบคลังรหัสสุ่มมั่ว 100 ใบ (Random Unique 6-Digit Codes)
+// ----------------------------------------------------
+let passcodeDatabase = [];
 
-// 1. ระบบจัดการ WebSocket Connection
-io.on('connection', (socket) => {
-    console.log(`[Socket.IO] Client connected: ${socket.id}`);
-    kioskSocket = socket;
+// ฟังก์ชันสร้างรหัสสุ่มมั่ว 6 หลัก แบบไม่ซ้ำกัน 100 ใบ
+function generateRandomPasscodes() {
+    passcodeDatabase = [];
+    const generatedCodes = new Set();
 
-    socket.on('disconnect', () => {
-        console.log(`[Socket.IO] Client disconnected: ${socket.id}`);
-        if (kioskSocket && kioskSocket.id === socket.id) {
-            kioskSocket = null;
-        }
-    });
-});
-
-// 2. Health Check Endpoint (สำหรับเช็กสถานะเซิร์ฟเวอร์บน Render.com)
-app.get('/', (req, res) => {
-    res.send('Kiosk Backend Server is running online!');
-});
-
-// 3. Webhook Endpoint รับแจ้งเตือนการชำระเงินจาก ChillPay
-app.post('/api/webhook/chillpay', (req, res) => {
-    try {
-        console.log('=== Received ChillPay Webhook ===');
-        console.log(JSON.stringify(req.body, null, 2));
-
-        // ChillPay จะส่ง PaymentStatus หรือ Code หรือ Status กลับมา
-        // Status: 0 หรือ PaymentStatus: 0 / 1 หมายถึง ชำระเงินสำเร็จ
-        const paymentStatus = req.body.PaymentStatus !== undefined ? req.body.PaymentStatus : req.body.Code;
-        const status = req.body.Status;
-
-        if (paymentStatus == 0 || paymentStatus == 1 || status == 0) {
-            console.log('✅ Payment Confirmed! Emitting PAYMENT_SUCCESS to Kiosk...');
-
-            // ส่งสัญญาณ PAYMENT_SUCCESS ผ่าน Socket.IO ไปยังตู้ WPF
-            io.emit('PAYMENT_SUCCESS', {
-                status: 'success',
-                orderNo: req.body.OrderNo || req.body.orderNo || 'N/A',
-                amount: req.body.Amount || req.body.amount || 0,
-                transactionTime: new Date().toISOString()
-            });
-
-            // ตอบกลับ 200 OK ให้ ChillPay รับทราบ
-            return res.status(200).send('OK');
-        } else {
-            console.log('❌ Payment Status not successful:', paymentStatus);
-            return res.status(400).send('Payment Incomplete');
-        }
-    } catch (err) {
-        console.error('💥 Webhook Processing Error:', err.message);
-        return res.status(500).send('Server Internal Error');
+    while (generatedCodes.size < 100) {
+        // สุ่มตัวเลขตั้งแต่ 100000 ถึง 999999
+        const randomCode = Math.floor(100000 + Math.random() * 900000).toString();
+        generatedCodes.add(randomCode);
     }
-});
 
-// 4. Test Endpoint สำหรับกดทดสอบยิงปลดล็อกตู้ผ่าน Browser
-app.get('/api/test-unlock', (req, res) => {
-    console.log('🧪 Manual Test Unlock triggered via Browser');
-    io.emit('PAYMENT_SUCCESS', {
-        status: 'success',
-        orderNo: 'MANUAL_TEST',
-        amount: 1.00
+    // แปลงข้อมูลใส่ใน Database พร้อมสถานะยังไม่ได้ใช้งาน
+    generatedCodes.forEach(code => {
+        passcodeDatabase.push({ code: code, isUsed: false });
     });
-    res.send('Sent PAYMENT_SUCCESS signal to Kiosk!');
+
+    console.log(`[Database] Successfully generated ${passcodeDatabase.length} unique random passcodes.`);
+}
+
+// สร้างรหัสสุ่ม 100 ใบเมื่อเริ่มเปิดเซิร์ฟเวอร์
+generateRandomPasscodes();
+
+// ----------------------------------------------------
+// Endpoints & API
+// ----------------------------------------------------
+
+// 1. Health Check
+app.get('/', (req, res) => {
+    res.send('Kiosk Random Passcode Backend is Running!');
 });
 
-// เริ่มต้นรัน HTTP Server บน Port ที่ Render กำหนด (default: 10000)
+// 2. API สำหรับตู้ Kiosk ยิงมาตรวจรหัส 6 หลัก
+app.post('/api/verify-code', (req, res) => {
+    const { code } = req.body;
+
+    if (!code) {
+        return res.status(400).json({ success: false, message: 'กรุณาระบุรหัสผ่าน' });
+    }
+
+    // ค้นหารหัสในระบบ
+    const foundItem = passcodeDatabase.find(item => item.code === code.trim());
+
+    if (!foundItem) {
+        return res.json({ success: false, message: 'รหัสผ่านไม่ถูกต้อง' });
+    }
+
+    if (foundItem.isUsed) {
+        return res.json({ success: false, message: 'รหัสผ่านนี้ถูกใช้งานไปแล้ว' });
+    }
+
+    // ถ้ารหัสถูกต้องและยังไม่ถูกใช้ -> เปลี่ยนสถานะเป็นใช้แล้ว
+    foundItem.isUsed = true;
+    console.log(`[Passcode Used] Code ${code} successfully unlocked kiosk.`);
+
+    // ส่งสัญญาณ WebSocket ปลดล็อกไปยัง C# WPF
+    io.emit('PAYMENT_SUCCESS', { status: 'success', codeUsed: code });
+
+    return res.json({ success: true, message: 'ปลดล็อกสำเร็จ' });
+});
+
+// 3. API สำหรับดูรายการรหัสทั้งหมดพร้อมสถานะ (สำหรับให้แคชเชียร์ปริ้นท์ออกขาย)
+app.get('/api/admin/codes', (req, res) => {
+    res.json(passcodeDatabase);
+});
+
+// 4. API สำหรับสุ่มสร้างรหัสชุดใหม่ 100 ใบ (Reset ทั้งระบบ)
+app.get('/api/admin/reset', (req, res) => {
+    generateRandomPasscodes();
+    res.json({
+        message: 'Reset and generated 100 new random passcodes successfully!',
+        sampleCodes: passcodeDatabase.slice(0, 5) // แสดงตัวอย่าง 5 รหัสแรก
+    });
+});
+
+// WebSocket Connection
+io.on('connection', (socket) => {
+    console.log(`[Socket.IO] Kiosk Connected: ${socket.id}`);
+});
+
 const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
