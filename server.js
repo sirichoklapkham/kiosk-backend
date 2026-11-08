@@ -92,6 +92,7 @@ app.get('/api/admin/reset', (req, res) => {
 });
 
 // 5. หน้า Dashboard พิมพ์คูปองสลิป 80mm สำหรับแคชเชียร์
+// หน้า Dashboard ปริ้นสลิปคูปองขนาด 80mm สำหรับแคชเชียร์
 app.get('/admin', (req, res) => {
     res.send(`
     <!DOCTYPE html>
@@ -100,47 +101,95 @@ app.get('/admin', (req, res) => {
         <meta charset="UTF-8">
         <title>ระบบพิมพ์คูปอง Photo Booth (80mm)</title>
         <style>
-            body { font-family: 'Courier New', monospace; padding: 20px; background: #f4f4f9; }
-            .no-print { margin-bottom: 20px; }
-            button { padding: 10px 20px; font-size: 16px; cursor: pointer; background: #4CAF50; color: white; border: none; border-radius: 5px; margin-right: 10px; }
+            /* กำหนดระยะการแสดงผลบนหน้าจอคอมพิวเตอร์ */
+            body { 
+                font-family: 'Tahoma', 'Courier New', monospace; 
+                padding: 20px; 
+                background: #eef2f5; 
+                margin: 0;
+            }
+            .no-print { margin-bottom: 20px; text-align: center; }
+            button { 
+                padding: 12px 24px; 
+                font-size: 16px; 
+                font-weight: bold;
+                cursor: pointer; 
+                background: #28a745; 
+                color: white; 
+                border: none; 
+                border-radius: 8px; 
+                margin: 0 5px; 
+                box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            }
+            button:hover { background: #218838; }
+
+            /* โครงสร้างใบเสร็จขนาด 80mm */
             .ticket {
-                width: 72mm;
-                padding: 10px;
-                margin: 10px 0;
-                background: #fff;
-                border: 1px dashed #ccc;
+                width: 72mm; /* ระยะพิมพ์จริงของกระดาษ 80mm */
+                padding: 12px 5px;
+                margin: 15px auto;
+                background: #ffffff;
+                border: 1px dashed #b5b5b5;
                 text-align: center;
                 box-sizing: border-box;
-                page-break-after: always;
+                color: #000000;
             }
-            .title { font-size: 18px; font-weight: bold; margin-bottom: 5px; }
-            .subtitle { font-size: 12px; margin-bottom: 15px; }
-            .code-box { 
-                font-size: 28px; 
-                font-weight: bold; 
-                letter-spacing: 4px; 
-                border: 2px solid #000; 
-                padding: 10px; 
-                margin: 10px 0; 
-                display: inline-block;
-            }
-            .footer { font-size: 11px; margin-top: 10px; }
 
+            .header-title { font-size: 20px; font-weight: bold; letter-spacing: 1px; margin-bottom: 2px; }
+            .header-sub { font-size: 13px; margin-bottom: 10px; }
+            .divider { border-top: 1px dashed #000; margin: 8px 0; }
+            
+            .passcode-label { font-size: 13px; font-weight: bold; margin-top: 5px; }
+            .code-box { 
+                font-size: 32px; 
+                font-weight: bold; 
+                letter-spacing: 6px; 
+                border: 2px solid #000; 
+                padding: 8px 0; 
+                margin: 10px auto; 
+                width: 90%;
+                background-color: #f9f9f9;
+            }
+
+            .footer-info { font-size: 11px; margin-top: 8px; line-height: 1.4; }
+
+            /* -------------------------------------------------- */
+            /* CSS สำหรับสั่งพิมพ์ออกเครื่อง Thermal Printer 80mm */
+            /* -------------------------------------------------- */
             @media print {
-                .no-print { display: none; }
-                body { padding: 0; background: #fff; }
-                .ticket { border: none; margin: 0; width: 100%; }
+                @page {
+                    size: 80mm auto; /* กำหนดขนาดหน้ากระดาษม้วน 80mm */
+                    margin: 0mm; /* ลบขอบกระดาษจากเบราว์เซอร์ */
+                }
+                html, body {
+                    width: 80mm;
+                    margin: 0;
+                    padding: 0;
+                    background: #ffffff;
+                }
+                .no-print { display: none !important; }
+                .ticket {
+                    width: 72mm;
+                    margin: 0 auto;
+                    border: none;
+                    padding: 10px 2mm 15px 2mm;
+                    page-break-after: always; /* บังคับตัดกระดาษแยกใบหลังจากพิมพ์เสร็จแต่ละคูปอง */
+                    break-after: page;
+                }
+                .code-box {
+                    background-color: transparent;
+                }
             }
         </style>
     </head>
     <body>
         <div class="no-print">
-            <h2>คลังคูปอง Photo Booth (80mm Thermal Print)</h2>
-            <button onclick="window.print()">🖨️ สั่งพิมพ์สลิปคูปองทั้งหมด</button>
-            <button onclick="location.reload()" style="background:#2196F3;">🔄 รีเฟรชรายการ</button>
+            <h2>🖨️ ระบบคลังคูปอง Photo Booth (80mm Thermal Print)</h2>
+            <button onclick="window.print()">🖨️ สั่งพิมพ์คูปองทั้งหมด</button>
+            <button onclick="location.reload()" style="background:#007bff;">🔄 รีเฟรชรายการ</button>
         </div>
 
-        <div id="tickets-container">กำลังโหลดรหัส...</div>
+        <div id="tickets-container">กำลังโหลดข้อมูลคูปอง...</div>
 
         <script>
             fetch('/api/admin/codes')
@@ -150,16 +199,17 @@ app.get('/admin', (req, res) => {
                     container.innerHTML = '';
                     
                     data.forEach((item, index) => {
+                        const statusText = item.isUsed ? '(ใช้งานแล้ว)' : '';
                         const ticketHtml = \`
                             <div class="ticket">
-                                <div class="title">PHOTO BOOTH</div>
-                                <div class="subtitle">คูปองเข้าใช้งานถ่ายภาพ</div>
-                                <div>----------------------------------</div>
-                                <div>รหัสผ่านสำหรับเข้าตู้ (Passcode)</div>
+                                <div class="header-title">PHOTO BOOTH</div>
+                                <div class="header-sub">คูปองเข้าใช้งานถ่ายภาพ</div>
+                                <div class="divider"></div>
+                                <div class="passcode-label">รหัสผ่านสำหรับเข้าตู้ (Passcode)</div>
                                 <div class="code-box">\${item.code}</div>
-                                <div>----------------------------------</div>
-                                <div class="footer">
-                                    ใบที่: \${index + 1} / 100<br>
+                                <div class="divider"></div>
+                                <div class="footer-info">
+                                    ใบที่: \${index + 1} / \${data.length} \${statusText}<br>
                                     *ใช้ได้ 1 ครั้งต่อ 1 สิทธิ์การถ่ายภาพ*
                                 </div>
                             </div>
