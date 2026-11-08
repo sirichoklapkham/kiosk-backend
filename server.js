@@ -77,7 +77,7 @@ app.post('/api/verify-code', (req, res) => {
     return res.json({ success: true, message: 'ปลดล็อกสำเร็จ' });
 });
 
-// 3. API สำหรับดูรายการรหัสทั้งหมดพร้อมสถานะ (สำหรับให้แคชเชียร์ปริ้นท์ออกขาย)
+// 3. API สำหรับดูรายการรหัสทั้งหมดพร้อมสถานะ (สำหรับแคชเชียร์/ดึงข้อมูล)
 app.get('/api/admin/codes', (req, res) => {
     res.json(passcodeDatabase);
 });
@@ -87,20 +87,11 @@ app.get('/api/admin/reset', (req, res) => {
     generateRandomPasscodes();
     res.json({
         message: 'Reset and generated 100 new random passcodes successfully!',
-        sampleCodes: passcodeDatabase.slice(0, 5) // แสดงตัวอย่าง 5 รหัสแรก
+        sampleCodes: passcodeDatabase.slice(0, 5)
     });
 });
 
-// WebSocket Connection
-io.on('connection', (socket) => {
-    console.log(`[Socket.IO] Kiosk Connected: ${socket.id}`);
-});
-
-const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-});
-// เพิ่มต่อใน server.js หน้าสำหรับแคชเชียร์ดึงรหัสและสั่งพิมพ์สลิป 80mm
+// 5. หน้า Dashboard พิมพ์คูปองสลิป 80mm สำหรับแคชเชียร์
 app.get('/admin', (req, res) => {
     res.send(`
     <!DOCTYPE html>
@@ -111,11 +102,9 @@ app.get('/admin', (req, res) => {
         <style>
             body { font-family: 'Courier New', monospace; padding: 20px; background: #f4f4f9; }
             .no-print { margin-bottom: 20px; }
-            button { padding: 10px 20px; font-size: 16px; cursor: pointer; background: #4CAF50; color: white; border: none; border-radius: 5px; }
-            
-            /* เลย์เอาต์สำหรับเครื่องพิมพ์ความร้อน 80mm */
+            button { padding: 10px 20px; font-size: 16px; cursor: pointer; background: #4CAF50; color: white; border: none; border-radius: 5px; margin-right: 10px; }
             .ticket {
-                width: 72mm; /* ความกว้างกระดาษ 80mm (ระยะพิมพ์จริง ~72mm) */
+                width: 72mm;
                 padding: 10px;
                 margin: 10px 0;
                 background: #fff;
@@ -182,4 +171,14 @@ app.get('/admin', (req, res) => {
     </body>
     </html>
     `);
+});
+
+// WebSocket Connection
+io.on('connection', (socket) => {
+    console.log(`[Socket.IO] Kiosk Connected: ${socket.id}`);
+});
+
+const PORT = process.env.PORT || 10000;
+server.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
 });
