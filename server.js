@@ -20,7 +20,7 @@ app.use(express.json());
 // 1. นำลิงก์ MongoDB Connection String มาใส่ตรงนี้
 // (อย่าลืมเปลี่ยน <username> และ <password> เป็นของคุณจริงๆ)
 // =========================================================
-const MONGO_URI = "mongodb+srv://s1r1chokiupkhux_db_user:1hIGh1In8b0dbrh9@cluster0.xxxxxxx.mongodb.net/photobooth?retryWrites=true&w=majority";
+const MONGO_URI = "mongodb+srv://sirichoklapkham_db_user:1hIGh1In8b0dbrh9@cluster0.0z5cldp.mongodb.net/photobooth?retryWrites=true&w=majority";
 
 mongoose.connect(MONGO_URI)
     .then(() => {
