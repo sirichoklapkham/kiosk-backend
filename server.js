@@ -2,8 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
-const fs = require('fs');
-const path = require('path');
+const mongoose = require('mongoose');
 
 const app = express();
 const server = http.createServer(app);
@@ -17,122 +16,134 @@ const io = new Server(server, {
 app.use(cors());
 app.use(express.json());
 
-const FILE_PATH = path.join(__dirname, 'coupons.json');
-let coupons = [];
+// =========================================================
+// 1. นำลิงก์ MongoDB Connection String มาใส่ตรงนี้
+// (อย่าลืมเปลี่ยน <username> และ <password> เป็นของคุณจริงๆ)
+// =========================================================
+const MONGO_URI = "mongodb+srv://<username>:<password>@cluster0.xxxxx.mongodb.net/photobooth?retryWrites=true&w=majority";
+
+mongoose.connect(MONGO_URI)
+    .then(() => {
+        console.log("✅ เชื่อมต่อฐานข้อมูล MongoDB สำเร็จ (ข้อมูลถาวรแล้ว)");
+        initCoupons(); // เริ่มเช็คและสร้างคูปอง
+    })
+    .catch(err => console.error("❌ เชื่อมต่อ MongoDB ล้มเหลว:", err));
 
 // =========================================================
-// ฟังก์ชัน อ่าน/เขียน ไฟล์ JSON ถาวร
+// 2. สร้างโครงสร้างข้อมูลสำหรับคูปอง
 // =========================================================
+const couponSchema = new mongoose.Schema({
+    id: Number,
+    code: String,
+    used: { type: Boolean, default: false },
+    usedAt: Date
+});
+const Coupon = mongoose.model('Coupon', couponSchema);
 
-// 1. อ่านข้อมูลคูปองจากไฟล์ coupons.json
-function loadCouponsFromFile() {
-    if (fs.existsSync(FILE_PATH)) {
-        try {
-            const data = fs.readFileSync(FILE_PATH, 'utf8');
-            coupons = JSON.parse(data);
-            console.log(`[File System] โหลดข้อมูลคูปองสำเร็จ (${coupons.length} ใบ)`);
-        } catch (e) {
-            console.error("[File System] อ่านไฟล์คูปองล้มเหลว เริ่มต้นสร้างใหม่");
-            coupons = [];
-        }
-    }
-}
-
-// 2. บันทึกข้อมูลคูปองลงไฟล์ coupons.json
-function saveCouponsToFile() {
-    try {
-        fs.writeFileSync(FILE_PATH, JSON.stringify(coupons, null, 2), 'utf8');
-        console.log("[File System] บันทึกข้อมูลคูปองลงไฟล์เรียบร้อย");
-    } catch (e) {
-        console.error("[File System] บันทึกไฟล์ล้มเหลว:", e);
-    }
-}
-
-// 3. ฟังก์ชันสุ่มรหัส 6 หลัก
+// =========================================================
+// 3. ฟังก์ชันระบบคูปอง (เชื่อมฐานข้อมูลออนไลน์)
+// =========================================================
 function generateRandomCode() {
     return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-// 4. สร้างคูปองเพิ่มให้ครบ 100 ใบ (ไม่ทับรหัสเดิม)
-function initCoupons() {
-    loadCouponsFromFile(); // อ่านจากไฟล์ก่อน
+async function initCoupons() {
+    try {
+        const unusedCount = await Coupon.countDocuments({ used: false });
+        let needed = 100 - unusedCount;
 
-    let currentUnused = coupons.filter(c => !c.used).length;
-    let needed = 100 - currentUnused;
+        if (needed > 0) {
+            console.log(`[DB] กำลังสร้างคูปองใหม่เพิ่ม ${needed} ใบ...`);
+            let newCoupons = [];
+            
+            // หา ID ล่าสุด
+            const maxIdDoc = await Coupon.findOne().sort("-id");
+            let nextId = maxIdDoc ? maxIdDoc.id + 1 : 1;
 
-    if (needed > 0) {
-        for (let i = 0; i < needed; i++) {
-            let code;
-            do {
-                code = generateRandomCode();
-            } while (coupons.some(c => c.code === code));
+            for (let i = 0; i < needed; i++) {
+                let code;
+                let isDuplicate = true;
+                
+                // สุ่มจนกว่าจะได้รหัสที่ไม่ซ้ำ
+                while (isDuplicate) {
+                    code = generateRandomCode();
+                    const exist = await Coupon.findOne({ code: code });
+                    if (!exist) isDuplicate = false;
+                }
 
-            coupons.push({
-                id: coupons.length + 1,
-                code: code,
-                used: false,
-                usedAt: null
-            });
+                newCoupons.push({
+                    id: nextId++,
+                    code: code,
+                    used: false
+                });
+            }
+            
+            if (newCoupons.length > 0) {
+                await Coupon.insertMany(newCoupons);
+                console.log(`[DB] บันทึกคูปองใหม่ลงฐานข้อมูลออนไลน์สำเร็จ!`);
+            }
         }
-        saveCouponsToFile(); // สร้างเสร็จแล้วบันทึกทันที
+    } catch (err) {
+        console.error("[DB] เกิดข้อผิดพลาดในการสร้างคูปอง:", err);
     }
 }
-
-// เรียกทำงานเมื่อเริ่มเซิร์ฟเวอร์
-initCoupons();
 
 // =========================================================
 // API Endpoints
 // =========================================================
 
-// ตรวจสอบรหัสคูปองจากตู้ Kiosk
-app.post('/api/verify-code', (req, res) => {
+// API: ตรวจสอบรหัสคูปองจากตู้ Kiosk
+app.post('/api/verify-code', async (req, res) => {
     const { code } = req.body;
 
     if (!code) {
         return res.status(400).json({ success: false, message: "กรุณากรอกรหัสคูปอง" });
     }
 
-    const coupon = coupons.find(c => c.code === code);
+    try {
+        const coupon = await Coupon.findOne({ code: code });
 
-    if (!coupon) {
-        return res.json({ success: false, message: "ไม่พบรหัสคูปองนี้ในระบบ" });
+        if (!coupon) {
+            return res.json({ success: false, message: "ไม่พบรหัสคูปองนี้ในระบบ" });
+        }
+
+        if (coupon.used) {
+            return res.json({ success: false, message: "คูปองนี้ถูกใช้งานไปแล้ว" });
+        }
+
+        // อัปเดตการใช้งานลงฐานข้อมูล
+        coupon.used = true;
+        coupon.usedAt = new Date();
+        await coupon.save();
+
+        // ส่งสัญญาณให้ตู้ปลดล็อก
+        io.emit('PAYMENT_SUCCESS', { code: coupon.code });
+
+        return res.json({ success: true, message: "อนุมัติการใช้งานสำเร็จ", code: coupon.code });
+        
+    } catch (err) {
+        return res.status(500).json({ success: false, message: "ระบบขัดข้อง" });
     }
-
-    if (coupon.used) {
-        return res.json({ success: false, message: "คูปองนี้ถูกใช้งานไปแล้ว" });
-    }
-
-    // ตัดการใช้งานคูปอง
-    coupon.used = true;
-    coupon.usedAt = new Date().toISOString();
-
-    // บันทึกสถานะการใช้ลงไฟล์ JSON ทันที
-    saveCouponsToFile();
-
-    // ส่งสัญญาณ Realtime ไปที่ตู้ Kiosk
-    io.emit('PAYMENT_SUCCESS', { code: coupon.code });
-
-    return res.json({
-        success: true,
-        message: "อนุมัติการใช้งานสำเร็จ",
-        code: coupon.code
-    });
 });
 
-// ดึงข้อมูลคูปองทั้งหมด (สำหรับ Admin)
-app.get('/api/admin/coupons', (req, res) => {
-    res.json({
-        total: coupons.length,
-        unused: coupons.filter(c => !c.used).length,
-        used: coupons.filter(c => c.used).length,
-        coupons: coupons
-    });
+// API: ดึงข้อมูลคูปองทั้งหมดให้ Admin
+app.get('/api/admin/coupons', async (req, res) => {
+    try {
+        const coupons = await Coupon.find().sort("id");
+        res.json({
+            total: coupons.length,
+            unused: coupons.filter(c => !c.used).length,
+            used: coupons.filter(c => c.used).length,
+            coupons: coupons
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, message: "ดึงข้อมูลล้มเหลว" });
+    }
 });
 
-// สั่งเติมรหัสใหม่ให้ครบ 100 ใบ
-app.post('/api/admin/generate', (req, res) => {
-    initCoupons();
+// API: สั่งเติมรหัสใหม่
+app.post('/api/admin/generate', async (req, res) => {
+    await initCoupons();
     res.json({ success: true, message: "เติมรหัสใหม่เรียบร้อยแล้ว" });
 });
 
@@ -159,7 +170,6 @@ app.get('/admin', (req, res) => {
         .btn-refresh { background-color: #00a8ff; }
         .btn:hover { opacity: 0.9; }
         .stats-text { font-size: 14px; font-weight: bold; color: #333; }
-
         .coupon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 15px; max-width: 1200px; margin: 0 auto; }
         .coupon-card { background: white; border: 2px dashed #95a5a6; border-radius: 8px; padding: 12px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.05); box-sizing: border-box; page-break-inside: avoid; break-inside: avoid; }
         .coupon-title { font-size: 15px; font-weight: bold; margin: 0; color: #2c3e50; }
@@ -167,7 +177,6 @@ app.get('/admin', (req, res) => {
         .passcode-box { border: 2px solid #2c3e50; border-radius: 6px; padding: 6px 0; font-size: 24px; font-weight: bold; letter-spacing: 4px; color: #111; background-color: #f8f9fa; margin: 8px 0; }
         .coupon-footer { font-size: 10px; color: #7f8c8d; line-height: 1.3; }
         .used-badge { color: #e74c3c; font-weight: bold; }
-
         @media print {
             @page { size: A4 portrait; margin: 8mm; }
             body { background: white !important; padding: 0 !important; margin: 0 !important; }
@@ -180,7 +189,6 @@ app.get('/admin', (req, res) => {
     </style>
 </head>
 <body>
-
     <div class="header-panel">
         <div class="header-title">📄 ระบบคลังคูปอง Photo Booth (A4 Layout)</div>
         <div class="btn-group">
@@ -191,36 +199,29 @@ app.get('/admin', (req, res) => {
         </div>
         <div class="stats-text" id="stats">กำลังโหลดข้อมูล...</div>
     </div>
-
     <div class="coupon-grid" id="couponContainer"></div>
 
     <script>
         let allCoupons = [];
-
         async function loadCoupons() {
             try {
                 const res = await fetch('/api/admin/coupons');
                 const data = await res.json();
                 allCoupons = data.coupons;
-
                 document.getElementById('stats').innerText = 
                     \`รวมทั้งหมด \${data.total} ใบ | ยังไม่ได้ใช้: \${data.unused} ใบ | ใช้งานแล้ว: \${data.used} ใบ\`;
-
                 renderCoupons(allCoupons);
             } catch (err) {
                 document.getElementById('stats').innerText = 'ไม่สามารถโหลดข้อมูลคูปองได้';
             }
         }
-
         function renderCoupons(coupons) {
             const container = document.getElementById('couponContainer');
             container.innerHTML = '';
-
             coupons.forEach(coupon => {
                 const card = document.createElement('div');
                 card.className = 'coupon-card';
                 card.setAttribute('data-used', coupon.used);
-
                 card.innerHTML = \`
                     <div class="coupon-title">PHOTO BOOTH</div>
                     <div class="coupon-subtitle">คูปองเข้าใช้งานถ่ายภาพ</div>
@@ -228,14 +229,13 @@ app.get('/admin', (req, res) => {
                     <div style="font-size: 11px; color: #555;">รหัสผ่านสำหรับเข้าตู้ (Passcode)</div>
                     <div class="passcode-box">\${coupon.code}</div>
                     <div class="coupon-footer">
-                        ใบที่: \${coupon.id} / 100 \${coupon.used ? '<span class="used-badge">(ใช้แล้ว)</span>' : ''}<br>
+                        ใบที่: \${coupon.id} \${coupon.used ? '<span class="used-badge">(ใช้แล้ว)</span>' : ''}<br>
                         *ใช้ได้ 1 ครั้งต่อ 1 สิทธิ์การถ่ายภาพ*
                     </div>
                 \`;
                 container.appendChild(card);
             });
         }
-
         function printCoupons(onlyUnused) {
             const cards = document.querySelectorAll('.coupon-card');
             cards.forEach(card => {
@@ -247,14 +247,12 @@ app.get('/admin', (req, res) => {
             });
             window.print();
         }
-
         async function generateNewCodes() {
             if (confirm('คุณต้องการเติมรหัสใหม่ให้ครบ 100 ใบใช่หรือไม่?')) {
                 await fetch('/api/admin/generate', { method: 'POST' });
                 loadCoupons();
             }
         }
-
         loadCoupons();
     </script>
 </body>
